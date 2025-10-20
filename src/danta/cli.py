@@ -16,10 +16,13 @@ def main():
 
     man = Manager(args.verbose)
     if path.is_file():
-        man.analyze(path)
+        man.add_module(path)
     else:
         for file in path.glob("*.py"):
             if not file.name.startswith("_"):
-                man.analyze(file)
+                man.add_module(file)
     man.summary()
-    man.run(dry_run=args.dry_run)
+    man.run()
+    man.update()
+    man.summary()
+    man.run()
