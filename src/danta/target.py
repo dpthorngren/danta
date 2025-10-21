@@ -1,14 +1,13 @@
 import base64
-import pickle
 import hashlib
 import inspect
-import os
+import pickle
 import re
 import sys
-from importlib import reload, util
+from importlib import util
 from importlib.machinery import ModuleSpec
 from pathlib import Path
-from types import FunctionType, ModuleType
+from types import FunctionType
 
 
 def register(func):
@@ -18,6 +17,7 @@ def register(func):
 
 
 class TrackedModule:
+
     @property
     def tracked(self):
         return {f for f in self.functions if f.tracked}
@@ -35,10 +35,14 @@ class TrackedModule:
         self.cache_dir = cache_dir
         self.cache_file = self.cache_dir / f"{self.name}_state.pickle"
         self.state = {}
+        self.cached = {}
+        self.cache_checksums = {}
         if self.cache_file.exists():
             try:
                 with open(self.cache_file, 'rb') as file:
-                    self.state = dict(pickle.load(file))
+                    self.cached = dict(pickle.load(file))
+                    if "_checksums" in self.cached.keys():
+                        self.cache_checksums = self.cached.pop('_checksums')
             except EOFError:
                 self.cache_file.unlink()
         self.update()
@@ -46,8 +50,8 @@ class TrackedModule:
     def write_state(self):
         for f in self.functions:
             assert not f.changed
-        print("SAVING", self.state)
         self.state["_checksums"] = self.checksums
+        print("SAVING", self.state)
         with open(self.cache_file, 'wb') as file:
             pickle.dump(self.state, file)
 
@@ -76,14 +80,20 @@ class TrackedModule:
     def register_function(self, func):
         '''Adds or updates a function target.'''
         target = Target(func, self)
-        check = self.checksums[target.name] if target.name in self.checksums.keys() else ""
-        target.changed = check == target.checksum
         for f in self.functions:
             if f.name == target.name:
                 f.update(target)
+                target = f
                 break
         else:
             self.functions.add(target)
+        if (target.tracked and target.name in self.cache_checksums.keys() and
+                self.cache_checksums[target.name] == target.checksum):
+            try:
+                self.state[target.name] = self.cached[target.name]
+            except KeyError:
+                print(f"Failed to load cached value for {target.name}")
+                print(self.cached)
         return target
 
 
@@ -98,7 +108,7 @@ class Target:
         self.checksum: str = Target.get_checksum(func)
         self.tracked: bool = hasattr(func, "_danta_info")
         self.spec = inspect.signature(func)
-        self.changed = True
+        self.changed = False
         if requires is None:
             self.requires = []
             for name, arg in self.spec.parameters.items():
@@ -115,7 +125,7 @@ class Target:
         assert self.fullname == target.fullname
         if target != self:
             print(self.name, "changed")
-            self.changed = self.checksum == target.checksum
+            self.changed = self.checksum != target.checksum
             self.func = target.func
             self.module = target.module
             self.checksum = target.checksum
@@ -124,16 +134,17 @@ class Target:
         return self.changed
 
     def run(self, state, verbose=False):
-        if self.fullname in state.keys() and not (self.changed or self.infiles_changed()):
+        if self.name in state[self.module.name].keys() and not (self.changed or self.infiles_changed()):
             print(f"Cached {self.name}()")
         else:
-            args = {k: state[f"{self.module.name}.{k}"] for k in self.requires}
-            # self.module.name +"."+ k: v for k, v in state.items() if k in self.requires}
+            args = {k: state[self.module.name][k] for k in self.requires}
             if verbose:
-                print(f"Called {self.name}(**{args})")
-            state[self.fullname] = self.func(**args)
+                print(f"Called {self.name}(", end="")
+                print(", ".join([f"{k} = {v}" for k, v in args.items()]), end="")
+                print(")")
+            state[self.module.name][self.name] = self.func(**args)
             self.changed = False
-        return state[self.fullname]
+        return state[self.module.name][self.name]
 
     def __hash__(self) -> int:
         return hash(self.fullname) + hash(self.checksum) + hash(self.tracked)

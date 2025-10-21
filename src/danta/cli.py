@@ -11,7 +11,7 @@ def main():
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
     if args.verbose:
-        print(f"CLI: {args=}")
+        print(f"CLI: {args}")
     path = args.path.expanduser()
 
     man = Manager(args.verbose)
@@ -21,8 +21,6 @@ def main():
         for file in path.glob("*.py"):
             if not file.name.startswith("_"):
                 man.add_module(file)
-    man.summary()
-    man.run()
-    man.update()
-    man.summary()
+    if args.verbose:
+        man.summary()
     man.run()
