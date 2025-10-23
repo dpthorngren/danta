@@ -1,23 +1,14 @@
 from pathlib import Path
 
-from .target import TrackedModule
+from .tracked_module import TrackedModule
 
 
 class Manager:
+    '''Manages one or more modules to run registered functions from.'''
 
     @property
-    def all_targets(self):
-        out = set()
-        for mod in self.modules:
-            out = out.union(mod.functions)
-        return out
-
-    @property
-    def tracked_targets(self):
-        out = set()
-        for mod in self.modules:
-            out = out.union(mod.tracked)
-        return out
+    def targets(self):
+        return {t.fullname: t for mod in self.modules for t in mod.tracked_functions}
 
     def __init__(self, verbose: bool = False):
         self.verbose = verbose
@@ -27,60 +18,52 @@ class Manager:
         self.cache_dir.mkdir(exist_ok=True)
 
     def add_module(self, path: str | Path):
+        '''Load a module by its source path and process it to be tracked and run.'''
         path = Path(path)
-        mod = TrackedModule(path, self.cache_dir)
         if self.verbose:
-            print("Loading", path)
+            print("Loading", path, end=' ')
+        mod = TrackedModule(path, self.cache_dir, self.verbose)
         self.modules.append(mod)
 
     def update(self):
+        '''Update all modules and their functions recursively.'''
         for mod in self.modules:
-            mod.update(self.verbose)
-
-    def _recursive_changed(self, target, all_targets):
-        target.changed = True
-        if target.name in all_targets.keys():
-            all_targets.pop(target.name)
-        for t in target.requires:
-            if t in all_targets.keys():
-                self._recursive_changed(all_targets[t], all_targets)
+            mod.update()
 
     def run(self, dry_run=False):
-        all_targets = {t.name: t for t in self.all_targets}
-        while len(all_targets) > 0:
-            for t in all_targets.values():
-                if t.changed:
-                    self._recursive_changed(t, all_targets)
-                    break
-            else:
-                break
-        state = {m.name: m.state for m in self.modules}
-        runnable = self.all_targets
+        '''Run all tracked functions, solving the dependency graph and using
+        cached values if possible.'''
+        # Solve the dependency graph
+        runnable = list(self.targets.values())
         ordered = []
         while len(runnable) > 0:
             for f in runnable:
-                if not f.tracked:
-                    f.changed = False
-                    break
-                elif f.satisfied(ordered):
+                if f.satisfied(ordered):
                     break
             else:
-                raise LookupError(f"Circular or unsatisfied dependencies for {runnable}")
-            if f.tracked:
-                ordered.append(f)
+                # TODO: Try to identify the specific issue
+                names = [f.fullname for f in runnable]
+                raise LookupError(f"Circular or unsatisfied dependencies for {names}")
+            ordered.append(f)
             runnable.remove(f)
-        if self.verbose:
+        # Report or run the solution
+        if dry_run:
             print("Solution:")
             for i in ordered:
                 print("    " + str(i)[14:])
-        if dry_run:
             return
+        targets = self.targets
         for i in ordered:
-            i.run(state, self.verbose)
+            i.run(targets, False, self.verbose)
         for mod in self.modules:
             mod.write_state()
+            print(mod.name)
+            for f in mod.functions:
+                if f.tracked:
+                    print(f"    {f.fullname:20} {f.output}")
 
     def summary(self):
+        '''List tracked modules, their functions, and their functions' dependencies.'''
         for m in self.modules:
             print("Module", m.name)
             for f in m.functions:
