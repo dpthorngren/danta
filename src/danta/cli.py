@@ -17,6 +17,7 @@ def main():
 
     # Set up the manager and load target modules
     man = Manager(args.verbose)
+    assert path.exists(), f'Could not locate "{path}".'
     if path.is_file():
         man.add_module(path)
     else:

@@ -60,7 +60,7 @@ class Manager:
             print(mod.name)
             for f in mod.functions:
                 if f.tracked:
-                    print(f"    {f.fullname:20} {f.output}")
+                    print(f"    {f.name+'*'*f.changed:20} {f.output}")
 
     def summary(self):
         '''List tracked modules, their functions, and their functions' dependencies.'''

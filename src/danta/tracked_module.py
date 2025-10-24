@@ -43,7 +43,10 @@ class TrackedModule:
         {self.name}_state.pickle to be used by the functions if the
         code checksums match and inputs haven't changed.'''
         self.cache = {}
+        self.checksums = {}
         for f in self.tracked_functions:
+            if f.output == _Cache_Empty_:
+                continue
             self.cache[f.name] = f.output
             self.checksums[f.name] = f.checksum
         if self.verbose:
@@ -67,5 +70,5 @@ class TrackedModule:
                 continue
             func = TargetFunction(f, self)
             if func.tracked and self.checksums.get(func.name, "") == func.checksum:
-                    func.output = self.cache[func.name]
+                func.output = self.cache[func.name]
             self.functions.append(func)

@@ -2,13 +2,22 @@ import base64
 import hashlib
 import inspect
 import re
+from dataclasses import dataclass
 from types import FunctionType
 
 
-def register(func):
-    # TODO: actually add decorator arguments
-    setattr(func, "_danta_info", {})
-    return func
+@dataclass(frozen=True)
+class FuncOptions:
+    always_run: bool
+    arg_rename: dict[str, str]
+
+
+def register(always_run=False, arg_rename={}):
+    def inner_register(func):
+        info = FuncOptions(always_run, arg_rename)
+        setattr(func, "_danta_info", info)
+        return func
+    return inner_register
 
 
 class _Cache_Empty_:
@@ -43,12 +52,19 @@ class TargetFunction:
         self.checksum: str = get_checksum(inspect.getsource(func))
         self.output = _Cache_Empty_
         self.tracked: bool = hasattr(func, "_danta_info")
+        arg_mapping = {}
+        if self.tracked:
+            self.options: FuncOptions = func._danta_info  # type: ignore
+            arg_mapping = self.options.arg_rename
         self.changed = False
-        self.requires = []
+        self.requires = {}
         spec = inspect.signature(func)
         for name, arg in spec.parameters.items():
             if arg.default == inspect.Parameter.empty:
-                self.requires.append(f"{self.module.name}.{name}")
+                req_name = arg_mapping.get(name, name)
+                if '.' not in req_name:
+                    req_name = f"{self.module.name}.{req_name}"
+                self.requires[name] = req_name
 
     def infiles_changed(self):
         # TODO: Check file dependencies
@@ -57,12 +73,14 @@ class TargetFunction:
     def run(self, all_targets, force=False, verbose=True):
         '''Run the function if the cache is out of date using data from all_targets,
         which is a dict of other TargetFunctions, indexed by name.'''
+        assert self.tracked
+        force |= self.options.always_run
         must_run = force or self.output is _Cache_Empty_ or self.infiles_changed()
         args = {}
-        for req_name in self.requires:
+        for arg_name, req_name in self.requires.items():
             req = all_targets[req_name]
             must_run |= req.changed
-            args[req.name] = req.output
+            args[arg_name] = req.output
         if must_run:
             if verbose:
                 print(f"Called {self.name}(", end="")
@@ -86,10 +104,9 @@ class TargetFunction:
     def satisfied(self, available) -> bool:
         '''Reports whether all dependencies are in "available", which is an iterable
         of TargetFunctions.'''
-        for i in self.requires:
+        for i in self.requires.values():
             for j in available:
                 if i == j.fullname:
-                    return i
                     break
             else:
                 return False
